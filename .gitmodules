@@ -1,0 +1,3 @@
+[submodule "site/themes/archie-zola"]
+	path = site/themes/archie-zola
+	url = https://github.com/XXXMrG/archie-zola
