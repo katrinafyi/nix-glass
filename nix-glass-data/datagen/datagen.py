@@ -9,11 +9,12 @@ import toml
 import shlex
 import pathlib
 import logging
+import datetime
 import argparse
 import itertools
 import subprocess
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class Derivation:
   nixfile: str = ''
   upstream: str = ''
 
-  depends: list[str] = field(default_factory=list)
+  dependson: list[str] = field(default_factory=list)
   requiredby: list[str] = field(default_factory=list)
   outputs: dict[str, str] = field(default_factory=dict)
 
@@ -68,12 +69,27 @@ class Flake:
 
   inputs: dict[str, str] = field(default_factory=dict) # input name -> url
 
+def write_derivation(flakeout: str, time: int, drv: Derivation):
+  os.makedirs(flakeout, exist_ok=True)
+  with open(flakeout + '/' + drv.hash + '.md', 'w') as f:
+    f.write('+++\n')
+    meta = DotDict()
+    meta.title = drv.fullname
+    meta.date = datetime.datetime.fromtimestamp(time)
+    meta.description = drv.shortdesc
+    meta.slug = drv.attr or drv.fullname
+    meta.in_search_index = not drv.external
+    meta.authors = drv.maintainers
+    meta.extra = asdict(drv)
+    toml.dump(meta, f)
+    f.write('+++\n')
+
 def main():
   logging.basicConfig(level=logging.DEBUG)
 
   argp = argparse.ArgumentParser(description="data generator for nix-glass.")
   argp.add_argument('flake', help='flake reference (required, e.g. github:nixos/nixpkgs)')
-  argp.add_argument('output', nargs='?', help='output directory (default: nix-glass-data)', default='nix-glass-data')
+  argp.add_argument('output', nargs='?', help='output directory (default: site/content)', default='site/content')
 
   args = argp.parse_args()
 
@@ -83,7 +99,7 @@ def main():
   flakename = args.flake
   meta = nix('flake', 'metadata', '--json', flakename)
   f = Flake(meta['resolvedUrl'], meta['url'])
-  print(f)
+  log.debug(str(f))
 
   flakeshow = nix('flake', 'show', '--json', flakename)
   
@@ -97,7 +113,6 @@ def main():
     allderivations[hash] = d
     return d
 
-  print(flakeshow)
   for outputtype, values in flakeshow.items():
     if outputtype != 'packages': continue
     values2 = values.items()
@@ -109,7 +124,7 @@ def main():
       arg = f.locked + '#' + attr
       (path, drvshow), = nix('derivation', 'show', arg).items()
 
-      meta = nix('eval', arg + '.meta', '--json')
+      drvmeta = nix('eval', arg + '.meta', '--json')
       try:
         src = str(nix('eval', arg + '.src.url', '--json'))
       except subprocess.CalledProcessError:
@@ -122,31 +137,36 @@ def main():
       d.version = drvshow.env.get('version') or ''
 
       d.upstream = src
-      d.website = meta.get('homepage') or ''
-      d.shortdesc = meta.get('description') or ''
-      d.longdesc = meta.get('longDescription') or ''
+      d.website = drvmeta.get('homepage') or ''
+      d.shortdesc = drvmeta.get('description') or ''
+      d.longdesc = drvmeta.get('longDescription') or ''
 
       built = nix('build', arg, '--json')[0]
       
+      for oname, opath in drvshow.outputs.items():
+        d.outputs[oname] = opath.path
+
       builtpath = list(built.outputs.values())[0]
       for root, dirs, files in os.walk(builtpath):
-        print(root, '/')
         links = [d for d in dirs if os.path.islink(os.path.join(root, d))]
-        if links or files:
-          # d.files.append((root.replace(builtpath + '/', '') + '/', ''))
-          for fi in links + files:
-            f2 = os.path.join(root, fi)
-            dest = ''
-            if os.path.islink(f2):
-              dest = os.readlink(f2)
-            d.files.append((f2.replace(builtpath + '/', ''), dest))
+        # d.files.append((root.replace(builtpath + '/', '') + '/', ''))
+        for fi in links + files:
+          f2 = os.path.join(root, fi)
+          dest = ''
+          if os.path.islink(f2):
+            dest = os.readlink(f2)
+          d.files.append((f2.replace(builtpath + '/', ''), dest))
 
       for d in drvshow.inputDrvs:
         get(d).requiredby.append(path)
-        get(path).depends.append(d)
+        get(path).dependson.append(d)
+
+  flakeout = args.output + '/' + flakename.split('/')[-1]
+  print(flakeout)
 
   for d in allderivations.values():
-    print(d)
+    write_derivation(flakeout, meta.lastModified, d)
+
 
   
   

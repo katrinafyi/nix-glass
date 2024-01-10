@@ -21,10 +21,12 @@
           system = system;
         }));
 
-      forAllSystems = f:
+      forAllSystems' = f:
         lib.genAttrs
           systems
-          (system: f nixpkgss.${system});
+          (sys: f sys nixpkgss.${sys});
+
+      forAllSystems = f: forAllSystems' (_: f);
 
       onlyDerivations = lib.filterAttrs (_: lib.isDerivation);
 
@@ -42,6 +44,5 @@
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixpkgs-fmt);
-
     };
 }
