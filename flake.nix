@@ -36,7 +36,7 @@
     in
     {
       packages = forAllSystems (pkgs: {
-        site = pkgs.callPackage ./site.nix { } {};
+        site = pkgs.callPackage ./site.nix { } { };
         main = pkgs.callPackage ./site.nix { } { site = /dev/null; };
       });
 
