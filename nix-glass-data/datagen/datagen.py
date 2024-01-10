@@ -5,9 +5,11 @@ import os
 import sys
 import glob
 import json
+import toml
 import shlex
 import pathlib
 import logging
+import argparse
 import itertools
 import subprocess
 
@@ -66,14 +68,19 @@ class Flake:
 
   inputs: dict[str, str] = field(default_factory=dict) # input name -> url
 
-if __name__ == '__main__':
+def main():
   logging.basicConfig(level=logging.DEBUG)
 
-  if len(sys.argv) < 2:
-    log.error(sys.argv[0] + ': requires flake argument.')
-    sys.exit(1)
+  argp = argparse.ArgumentParser(description="data generator for nix-glass.")
+  argp.add_argument('flake', help='flake reference (required, e.g. github:nixos/nixpkgs)')
+  argp.add_argument('output', nargs='?', help='output directory (default: nix-glass-data)', default='nix-glass-data')
 
-  flakename = sys.argv[1]
+  args = argp.parse_args()
+
+  log.info(str(args))
+  os.makedirs(args.output, exist_ok=True)
+
+  flakename = args.flake
   meta = nix('flake', 'metadata', '--json', flakename)
   f = Flake(meta['resolvedUrl'], meta['url'])
   print(f)
