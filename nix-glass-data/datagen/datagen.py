@@ -42,12 +42,14 @@ class Derivation:
   path: str = ''
   pname: str = ''
   version: str = ''
+  size: int = 0
 
   website: str = ''
   nixfile: str = ''
   upstream: str = ''
 
-  dependson: list[str] = field(default_factory=list)
+  builddepends: list[str] = field(default_factory=list)
+  rundepends: list[str] = field(default_factory=list)
   requiredby: list[str] = field(default_factory=list)
   outputs: dict[str, str] = field(default_factory=dict)
 
@@ -142,6 +144,11 @@ def main():
       d.longdesc = drvmeta.get('longDescription') or ''
 
       built = nix('build', arg, '--json')[0]
+
+      info = nix('path-info', arg, '--json', '--closure-size')[0]
+
+      d.size = info.closureSize
+      d.rundepends = [ nix('path-info', x, '--json')[0].deriver for x in info.references ]
       
       for oname, opath in drvshow.outputs.items():
         d.outputs[oname] = opath.path
@@ -159,7 +166,7 @@ def main():
 
       for d in drvshow.inputDrvs:
         get(d).requiredby.append(path)
-        get(path).dependson.append(d)
+        get(path).builddepends.append(d)
 
   flakeout = args.output + '/' + flakename.split('/')[-1]
   print(flakeout)
