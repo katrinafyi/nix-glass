@@ -40,7 +40,7 @@
       packages = forAllSystems (pkgs: {
         site = pkgs.callPackage ./site.nix { } { };
         main = pkgs.callPackage ./site.nix { } { site = /dev/null; };
-        data = pkgs.callPackage ./nix-glass-data/package.nix { };
+        data = pkgs.callPackage ./datagen/package.nix { };
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixpkgs-fmt);

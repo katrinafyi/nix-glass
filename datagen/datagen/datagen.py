@@ -48,9 +48,9 @@ class Derivation:
   nixfile: str = ''
   upstream: str = ''
 
-  builddepends: list[str] = field(default_factory=list)
-  rundepends: list[str] = field(default_factory=list)
-  requiredby: list[str] = field(default_factory=list)
+  builddepends: list[tuple[str,str]] = field(default_factory=list)
+  rundepends: list[tuple[str,str]] = field(default_factory=list)
+  requiredby: list[tuple[str,str]] = field(default_factory=list)
   outputs: dict[str, str] = field(default_factory=dict)
 
   shortdesc: str = ''
@@ -65,14 +65,14 @@ Derivations = dict[str, Derivation] # hash -> derivation
 @dataclass
 class Flake:
   name: str
-  locked: str
+  fullname: str
 
-  outputs: dict[str, Derivations] = field(default_factory=dict)
+  outputs: dict[str, list[Derivation]] = field(default_factory=dict)
 
   inputs: dict[str, str] = field(default_factory=dict) # input name -> url
 
 def write_derivation(flakeout: str, time: int, drv: Derivation):
-  os.makedirs(flakeout, exist_ok=True)
+  # os.makedirs(flakeout, exist_ok=True)
   with open(flakeout + '/' + drv.hash + '.md', 'w') as f:
     f.write('+++\n')
     meta = DotDict()
@@ -91,17 +91,19 @@ def main():
 
   argp = argparse.ArgumentParser(description="data generator for nix-glass.")
   argp.add_argument('flake', help='flake reference (required, e.g. github:nixos/nixpkgs)')
-  argp.add_argument('output', nargs='?', help='output directory (default: site/content)', default='site/content')
+  argp.add_argument('output', nargs='?', help='output file (default: [flake].json)', default='')
 
   args = argp.parse_args()
 
   log.info(str(args))
-  os.makedirs(args.output, exist_ok=True)
+  # os.makedirs(args.output, exist_ok=True)
 
   flakename = args.flake
   meta = nix('flake', 'metadata', '--json', flakename)
   f = Flake(meta['resolvedUrl'], meta['url'])
   log.debug(str(f))
+
+  args.output = args.output or meta.resolved.repo + '.json'
 
   flakeshow = nix('flake', 'show', '--json', flakename)
   
@@ -115,15 +117,23 @@ def main():
     allderivations[hash] = d
     return d
 
+  def rundepend(path):
+    drv = nix('path-info', path, '--json')[0].deriver
+    (_, drvshow), = nix('derivation', 'show', drv).items()
+    out = [x for x,v in drvshow.outputs.items() if v.path == path]
+    return (drv, out[0])
+
   for outputtype, values in flakeshow.items():
-    if outputtype != 'packages': continue
     values2 = values.items()
-    if 'x86_64-linux' in values.keys():
+    if 'x86_64-linux' in values.keys() and 'type' not in values['x86_64-linux']:
       values2 = itertools.chain(*(x.items() for x in values.values()))
-    values2 = filter(lambda x: x[1], values2)
+    values2 = filter(lambda x: x[1].get('type') == 'derivation', values2)
+
+    f.outputs[outputtype] = thisoutput = []
+
     for attr, drv in values2:
-      if attr != 'aslp': continue
-      arg = f.locked + '#' + attr
+      if attr != 'asli': continue
+      arg = f.fullname + '#' + attr
       (path, drvshow), = nix('derivation', 'show', arg).items()
 
       drvmeta = nix('eval', arg + '.meta', '--json')
@@ -133,6 +143,7 @@ def main():
         src = ''
 
       d = get(path)
+      thisoutput.append(d)
       d.external = False
       d.attr = attr
       d.pname = drvshow.env.get('pname') or drvshow.env.name
@@ -148,7 +159,7 @@ def main():
       info = nix('path-info', arg, '--json', '--closure-size')[0]
 
       d.size = info.closureSize
-      d.rundepends = [ nix('path-info', x, '--json')[0].deriver for x in info.references ]
+      d.rundepends = [ rundepend(ref) for ref in info.references ]
       
       for oname, opath in drvshow.outputs.items():
         d.outputs[oname] = opath.path
@@ -164,15 +175,17 @@ def main():
             dest = os.readlink(f2)
           d.files.append((f2.replace(builtpath + '/', ''), dest))
 
-      for d in drvshow.inputDrvs:
-        get(d).requiredby.append(path)
-        get(path).builddepends.append(d)
+      for d, x in drvshow.inputDrvs.items():
+        outs = x
+        for out in drvshow.outputs:
+          get(d).requiredby.append((path, out))
+        for out in outs:
+          get(path).builddepends.append((d, out))
 
-  flakeout = args.output + '/' + flakename.split('/')[-1]
-  print(flakeout)
-
-  for d in allderivations.values():
-    write_derivation(flakeout, meta.lastModified, d)
+  # pprint(asdict(f))
+  log.info('writing to ' + args.output)
+  with open(args.output, 'w') as file:
+    json.dump(asdict(f), file)
 
 
   
